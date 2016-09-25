@@ -1,234 +1,214 @@
-use std::rc::Rc;
-use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::cmp::Ordering;
 use std::collections::BinaryHeap;
 
 #[derive(Clone, Eq, PartialEq)]
-struct FreqNode<T> {
+struct FreqNode {
     freq: usize,
-    node: TreePath<T>,
+    node: usize,
 }
 
 #[derive(Debug)]
 pub struct HuffmanTree<T> {
     dict: ElemDict<T>,
-    head: TreePath<T>,
+    nodes: Vec<Type<T>>,
+    head: NodeRef,
 }
 
-type ElemDict<T> = BTreeMap<T, Rc<RefCell<LeafNode<T>>>>;
+type ElemDict<T> = BTreeMap<T, usize>;
 
-type TreePath<T> = Option<Type<T>>;
+type NodeRef = Option<usize>;
 
-#[derive(Clone, Eq, PartialEq, Debug)]
+#[derive(Clone, Copy, Eq, PartialEq, Debug)]
 enum Type<T> {
-    Branch(Rc<RefCell<BranchNode<T>>>),
-    Leaf(Rc<RefCell<LeafNode<T>>>),
+    Branch(BranchNode),
+    Leaf(LeafNode<T>),
 }
 
-#[derive(Clone, Eq, PartialEq, Debug)]
+#[derive(Clone, Copy, Eq, PartialEq, Debug)]
 enum Side {
     Left,
     Right,
 }
 
-#[derive(Clone, Eq, PartialEq, Debug)]
+#[derive(Clone, Copy, Eq, PartialEq, Debug)]
 struct LeafNode<T> {
     elem: T,
     side: Option<Side>,
-    parent: TreePath<T>,
+    parent: NodeRef,
 }
 
-#[derive(Clone, Eq, PartialEq, Debug)]
-struct BranchNode<T> {
+#[derive(Clone, Copy, Eq, PartialEq, Debug)]
+struct BranchNode {
     side: Option<Side>,
-    parent: TreePath<T>,
-    left: TreePath<T>,
-    right: TreePath<T>,
+    parent: NodeRef,
+    left: NodeRef,
+    right: NodeRef,
 }
 
-impl<T> Ord for FreqNode<T> where T: std::cmp::Eq {
-    fn cmp(&self, other: &FreqNode<T>) -> Ordering {
+impl Ord for FreqNode {
+    fn cmp(&self, other: &FreqNode) -> Ordering {
         other.freq.cmp(&self.freq)
     }
 }
 
-impl<T> PartialOrd for FreqNode<T> where T: std::cmp::PartialEq, T: std::cmp::Eq {
-    fn partial_cmp(&self, other: &FreqNode<T>) -> Option<Ordering> {
+impl PartialOrd for FreqNode {
+    fn partial_cmp(&self, other: &FreqNode) -> Option<Ordering> {
         Some(self.cmp(other))
     }
 }
 
 impl<T> HuffmanTree<T> where T: std::cmp::Ord, T: std::clone::Clone, T: std::marker::Copy {
     fn new() -> Self {
-        HuffmanTree { dict: BTreeMap::new(), head: None }
+        HuffmanTree { dict: BTreeMap::new(), nodes: Vec::new(), head: None }
     }
 
-    fn build(&mut self, sequence: &[T]) {
+    fn build(&mut self, chars: &[T]) {
         let mut freq_counter: BTreeMap<T, usize> = BTreeMap::new();
 
-        for elem in sequence {
+        for elem in chars {
             *freq_counter.entry(*elem).or_insert(0) += 1;
         }
 
-        let mut queue: BinaryHeap<FreqNode<T>> = BinaryHeap::new();
-
-        let mut dict: ElemDict<T> = BTreeMap::new();
+        let mut queue: BinaryHeap<FreqNode> = BinaryHeap::new();
 
         for (elem, freq) in freq_counter {
-            let boxed_leaf = Rc::new(RefCell::new(LeafNode { elem: elem, side: None, parent: None }));
-            let node = Some(Type::Leaf(boxed_leaf));
-            queue.push(FreqNode { freq: freq, node: node });
+            let leaf = Type::Leaf(LeafNode { elem: elem, side: None, parent: None });
+            self.nodes.push(leaf);
+            let new_index = self.nodes.len() - 1;
+            self.dict.insert(elem, new_index);
+            queue.push(FreqNode { freq: freq, node: new_index });
+        }
+
+        fn update_node<U>(node: Type<U>, parent: usize, side: Side) -> Type<U> {
+            match node {
+                Type::Branch(node) => {
+                    Type::Branch(BranchNode { side: Some(side),
+                                              parent: Some(parent),
+                                              left: node.left,
+                                              right: node.right })
+                },
+                Type::Leaf(node) => {
+                    Type::Leaf(LeafNode { elem: node.elem,
+                                          side: Some(side),
+                                          parent: Some(parent) })
+                },
+            }
         }
 
         while let Some(left_node) = queue.pop() {
             if let Some(right_node) = queue.pop() {
                 let freq = left_node.freq + right_node.freq;
 
-                let mut left_node = left_node.node;
-                let mut right_node = right_node.node;
+                let left_node = left_node.node;
+                let right_node = right_node.node;
 
-                let new_node = Rc::new(RefCell::new(BranchNode { side: None,
-                                                parent: None,
-                                                left: None,
-                                                right: None }));
+                self.nodes.push(Type::Branch(BranchNode { side: None,
+                                                          parent: None,
+                                                          left: Some(left_node),
+                                                          right: Some(right_node) }));
 
-                match left_node.as_mut() {
-                    Some(&mut Type::Branch(ref mut unwrapped_left_node)) => {
-                        unwrapped_left_node.borrow_mut().parent = Some(Type::Branch(new_node.clone()));
-                        unwrapped_left_node.borrow_mut().side = Some(Side::Left);
-                    },
-                    Some(&mut Type::Leaf(ref mut unwrapped_left_node)) => {
-                        unwrapped_left_node.borrow_mut().parent = Some(Type::Branch(new_node.clone()));
-                        unwrapped_left_node.borrow_mut().side = Some(Side::Left);
-                        dict.insert(unwrapped_left_node.borrow().elem, unwrapped_left_node.clone());
-                    },
-                    None => {},
-                }
+                let new_index = self.nodes.len() - 1;
 
-                match right_node.as_mut() {
-                    Some(&mut Type::Branch(ref mut unwrapped_right_node)) => {
-                        unwrapped_right_node.borrow_mut().parent = Some(Type::Branch(new_node.clone()));
-                        unwrapped_right_node.borrow_mut().side = Some(Side::Right);
-                    },
-                    Some(&mut Type::Leaf(ref mut unwrapped_right_node)) => {
-                        unwrapped_right_node.borrow_mut().parent = Some(Type::Branch(new_node.clone()));
-                        unwrapped_right_node.borrow_mut().side = Some(Side::Right);
-                        dict.insert(unwrapped_right_node.borrow().elem, unwrapped_right_node.clone());
-                    },
-                    None => {},
-                }
+                self.nodes[left_node] = update_node(self.nodes[left_node], new_index, Side::Left);
+                self.nodes[right_node] = update_node(self.nodes[right_node], new_index, Side::Right);
 
-                new_node.borrow_mut().left = left_node;
-                new_node.borrow_mut().right = right_node;
-
-                let new_node = Some(Type::Branch(new_node));
-                queue.push(FreqNode { freq: freq, node: new_node });
+                queue.push(FreqNode { freq: freq, node: new_index });
             } else {
-                self.head = left_node.node;
+                self.head = Some(left_node.node);
             }
         }
-
-        self.dict = dict;
     }
-}
 
-fn walk_up_nodes<T>(node: &TreePath<T>, buffer: &mut Vec<u8>) {
-    if let Some(Type::Branch(ref node)) = *node {
-        match node.borrow().side {
-            Some(Side::Left) => {
-                buffer.push(0);
-            },
-            Some(Side::Right) => {
-                buffer.push(1);
-            },
-            None => {},
+    fn encode(&self, chars: &[T]) -> Vec<u8> {
+        let mut output: Vec<u8> = Vec::new();
+
+        for elem in chars {
+            let mut buffer: Vec<u8> = Vec::new();
+
+            match self.dict.get(elem) {
+                Some(leaf) => {
+                    let mut current: Option<usize> = Some(*leaf);
+                    if current == self.head {
+                        buffer.push(0);
+                    }
+                    while let Some(index) = current {
+                        match self.nodes[index] {
+                            Type::Leaf(node) => {
+                                match node.side {
+                                    Some(Side::Left) => buffer.push(0),
+                                    Some(Side::Right) => buffer.push(1),
+                                    None => { /* eventually return error */ },
+                                };
+                                current = node.parent;
+                            }
+                            Type::Branch(node) => {
+                                match node.side {
+                                    Some(Side::Left) => buffer.push(0),
+                                    Some(Side::Right) => buffer.push(1),
+                                    None => { /* eventually return error */ },
+                                };
+                                current = node.parent;
+                            }
+                        }
+                    }
+                },
+                None => { /* eventually return error */ },
+            }
+
+            buffer.reverse();
+            output.append(&mut buffer);
         }
 
-        walk_up_nodes(&node.borrow().parent, buffer);
+        output
     }
-}
 
-pub fn encode<T>(tree: &HuffmanTree<T>, sequence: &[T]) -> Vec<u8> where T: std::cmp::Ord {
-    let mut output: Vec<u8> = Vec::new();
+    fn decode(&self, bits: &[u8]) -> Vec<T> where T: std::marker::Copy {
+        let mut output: Vec<T> = Vec::new();
 
-    for elem in sequence {
-        let mut char_buffer: Vec<u8> = Vec::new();
-
-        match tree.dict.get(elem) {
-            Some(leaf) => {
-                match leaf.borrow().side {
-                    Some(Side::Left) => {
-                        char_buffer.push(0);
+        let mut current: Option<usize> = self.head;
+        for bit in bits {
+            if let Some(index) = current {
+                match self.nodes[index] {
+                    Type::Leaf(node) => {
+                        output.push(node.elem);
+                        current = self.head;
                     },
-                    Some(Side::Right) => {
-                        char_buffer.push(1);
+                    Type::Branch(node) => {
+                        match *bit {
+                            0 => {
+                                if let Type::Leaf(node) = self.nodes[node.left.unwrap()] {
+                                    output.push(node.elem);
+                                    current = self.head;
+                                } else {
+                                    current = node.left;
+                                }
+                            },
+                            1 => {
+                                if let Type::Leaf(node) = self.nodes[node.right.unwrap()] {
+                                    output.push(node.elem);
+                                    current = self.head;
+                                } else {
+                                    current = node.right;
+                                }
+                            },
+                            _ => { /* eventually return error */ }
+                        }
                     },
-                    None => {},
                 }
-
-                walk_up_nodes(&leaf.borrow().parent, &mut char_buffer);
-            },
-            None => panic!("Element in input not encoded in tree"),
+            }
         }
 
-        char_buffer.reverse();
-        output.append(&mut char_buffer);
+        output
     }
-
-    output
-}
-
-fn walk_down_nodes<T>(head: &TreePath<T>, node: &TreePath<T>, mut buffer: &mut Vec<T>, input: &[u8]) where T: std::marker::Copy {
-    match *node {
-        Some(Type::Branch(ref node)) => {
-            match input[0] {
-                1 => {
-                    match input.len() {
-                        1 => {
-                            let ref new_node = node.borrow().right;
-                            if let &Some(Type::Leaf(ref node)) = new_node {
-                                buffer.push(node.borrow().elem);
-                            }
-                        },
-                        _ => walk_down_nodes(head, &node.borrow().right, &mut buffer, &input[1..]),
-                    }
-                },
-                0 => {
-                    match input.len() {
-                        1 => {
-                            let ref new_node = node.borrow().left;
-                            if let &Some(Type::Leaf(ref node)) = new_node {
-                                buffer.push(node.borrow().elem);
-                            }
-                        },
-                        _ => walk_down_nodes(head, &node.borrow().left, &mut buffer, &input[1..]),
-                    }
-                },
-                _ => panic!("Bit stream is not only zeroes or ones"),
-            }
-        },
-        Some(Type::Leaf(ref node)) => {
-            buffer.push(node.borrow().elem);
-            walk_down_nodes(head, head, &mut buffer, input);
-        },
-        None => {},
-    }
-}
-
-pub fn decode<T>(tree: &HuffmanTree<T>, bit_stream: &[u8]) -> Vec<T> where T: std::marker::Copy {
-    let mut output: Vec<T> = Vec::new();
-    if bit_stream.len() > 0 {
-        walk_down_nodes(&tree.head, &tree.head, &mut output, bit_stream);
-    }
-
-    output
 }
 
 #[cfg(test)]
 mod test {
     use std::str;
+    use std::collections::BTreeMap;
     use super::HuffmanTree;
+
     #[test]
     fn basics() {
         let mut tree = HuffmanTree::new();
@@ -245,19 +225,49 @@ mod test {
     }
 
     #[test]
+    fn empty_tree() {
+        let mut tree = HuffmanTree::new();
+        tree.build("".as_bytes());
+
+        assert_eq!(tree.dict, BTreeMap::new());
+        assert_eq!(tree.nodes, Vec::new());
+        assert_eq!(tree.head, None);
+
+        /* test errors from tree.encode() and tree.decode() */
+    }
+
+    #[test]
     fn encode() {
         let mut tree = HuffmanTree::new();
         let dictionary = "AAAABBBCCD";
         tree.build(dictionary.as_bytes());
 
-        assert_eq!(super::encode(&tree, "A".as_bytes()), vec![0]);
-        assert_eq!(super::encode(&tree, "B".as_bytes()), vec![1, 0]);
-        assert_eq!(super::encode(&tree, "C".as_bytes()), vec![1, 1, 1]);
-        assert_eq!(super::encode(&tree, "D".as_bytes()), vec![1, 1, 0]);
+        assert_eq!(tree.encode("A".as_bytes()), [0]);
+        assert_eq!(tree.encode("B".as_bytes()), [1, 0]);
+        assert_eq!(tree.encode("C".as_bytes()), [1, 1, 1]);
+        assert_eq!(tree.encode("D".as_bytes()), [1, 1, 0]);
 
-        assert_eq!(super::encode(&tree, "".as_bytes()), vec![]);
+        assert_eq!(tree.encode("".as_bytes()), []);
 
-        assert_eq!(super::encode(&tree, "AAAABBBCCD".as_bytes()), vec![0, 0, 0, 0, 1, 0, 1, 0, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 0]);
+        assert_eq!(tree.encode("AAAABBBCCD".as_bytes()), [0, 0, 0, 0, 1, 0, 1, 0, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 0]);
+    }
+
+    #[test]
+    fn small_tree() {
+        let mut tree = HuffmanTree::new();
+        tree.build("A".as_bytes());
+
+        assert!(tree.dict.contains_key("A".as_bytes().first().unwrap()));
+
+        assert_eq!(tree.encode("A".as_bytes()), [0]);
+        assert_eq!(tree.encode("AA".as_bytes()), [0, 0]);
+
+        assert_eq!(tree.encode("B".as_bytes()), []);
+        assert_eq!(tree.encode("BB".as_bytes()), []);
+
+        assert_eq!(str::from_utf8(tree.decode(&[0]).as_slice()).unwrap(), "A");
+        assert_eq!(str::from_utf8(tree.decode(&[1]).as_slice()).unwrap(), "A");
+        assert_eq!(str::from_utf8(tree.decode(&[0, 1]).as_slice()).unwrap(), "AA");
     }
 
     #[test]
@@ -266,12 +276,12 @@ mod test {
         let dictionary = "AAAABBBCCD";
         tree.build(dictionary.as_bytes());
 
-        assert_eq!(str::from_utf8(super::decode(&tree, &[0]).as_slice()).unwrap(), "A");
-        assert_eq!(str::from_utf8(super::decode(&tree, &[1, 0]).as_slice()).unwrap(), "B");
-        assert_eq!(str::from_utf8(super::decode(&tree, &[1, 1, 1]).as_slice()).unwrap(), "C");
-        assert_eq!(str::from_utf8(super::decode(&tree, &[1, 1, 0]).as_slice()).unwrap(), "D");
+        assert_eq!(str::from_utf8(tree.decode(&[0]).as_slice()).unwrap(), "A");
+        assert_eq!(str::from_utf8(tree.decode(&[1, 0]).as_slice()).unwrap(), "B");
+        assert_eq!(str::from_utf8(tree.decode(&[1, 1, 1]).as_slice()).unwrap(), "C");
+        assert_eq!(str::from_utf8(tree.decode(&[1, 1, 0]).as_slice()).unwrap(), "D");
 
-        assert_eq!(str::from_utf8(super::decode(&tree, &[]).as_slice()).unwrap(), "");
+        assert_eq!(str::from_utf8(tree.decode(&[]).as_slice()).unwrap(), "");
     }
 
     #[test]
@@ -280,7 +290,7 @@ mod test {
         let sentence = "Today, I walked over the Brooklyn Bridge.";
         tree.build(sentence.as_bytes());
 
-        let encoded = super::encode(&tree, sentence.as_bytes());
-        assert_eq!(str::from_utf8(super::decode(&tree, encoded.as_slice()).as_slice()).unwrap(), "Today, I walked over the Brooklyn Bridge.");
+        let encoded = tree.encode(sentence.as_bytes());
+        assert_eq!(str::from_utf8(tree.decode(encoded.as_slice()).as_slice()).unwrap(), "Today, I walked over the Brooklyn Bridge.");
     }
 }
