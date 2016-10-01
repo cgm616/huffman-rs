@@ -213,11 +213,12 @@ impl<T> HuffmanTree<T> where T: std::cmp::Ord, T: std::clone::Clone, T: std::mar
             if let Some(index) = current {
                 match self.nodes[index] {
                     Type::Leaf(node) => {
-                        if *bit == 0 || *bit == 1 {
-                            output.push(node.elem);
-                            current = self.head;
-                        } else {
-                            return Err(Error::NotBit);
+                        match *bit {
+                            0 | 1 => {
+                                output.push(node.elem);
+                                current = self.head;
+                            },
+                            _ => return Err(Error::NotBit),
                         }
                     },
                     Type::Branch(node) => {
